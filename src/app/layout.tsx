@@ -3,8 +3,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Hotel data ingestion (MVP)",
-  description: "Scrape, gap-detect, human review, normalize, export JSON/CSV",
+  title: "SelfServe Hotel Intake",
+  description: "Hotel data intake and review",
 };
 
 export default function RootLayout({

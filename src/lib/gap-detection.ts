@@ -16,6 +16,10 @@ const PATHS: PathSpec[] = [
   { path: "amenities.wifi", get: (h) => h.amenities.wifi, isAmenityBool: true },
   { path: "amenities.parking", get: (h) => h.amenities.parking, isAmenityBool: true },
   { path: "amenities.spa", get: (h) => h.amenities.spa, isAmenityBool: true },
+  { path: "amenities.breakfast", get: (h) => h.amenities.breakfast, isAmenityBool: true },
+  { path: "amenities.accessible_rooms", get: (h) => h.amenities.accessible_rooms, isAmenityBool: true },
+  { path: "amenities.ev_charging", get: (h) => h.amenities.ev_charging, isAmenityBool: true },
+  { path: "amenities.meeting_space", get: (h) => h.amenities.meeting_space, isAmenityBool: true },
   { path: "dining", get: (h) => h.dining },
   { path: "services", get: (h) => h.services },
   { path: "policies.check_in", get: (h) => h.policies.check_in },
@@ -132,8 +136,14 @@ export function detectGaps(
       report = classifyString(String(v ?? ""), fieldConfidence[path]);
     }
 
-    gapReport[path] = report;
-    if (report.status === "missing" || report.status === "partial") {
+    gapReport[path] = report.note
+      ? { status: report.status, note: report.note }
+      : { status: report.status };
+    if (
+      report.status === "missing" ||
+      report.status === "partial" ||
+      report.status === "uncertain"
+    ) {
       missingFields.push(path);
     }
   }

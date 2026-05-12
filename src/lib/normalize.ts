@@ -22,18 +22,66 @@ function dedupe(arr: string[]): string[] {
   return [...new Set(arr.map((s) => s.trim()).filter(Boolean))];
 }
 
+function mergeLabeledContacts(
+  primary: string,
+  scraped: HotelStructured["contact"]["phones"],
+  staff: HotelStructured["contact"]["phones"],
+): HotelStructured["contact"]["phones"] {
+  const seen = new Set<string>();
+  const out: HotelStructured["contact"]["phones"] = [];
+  for (const entry of [
+    { label: "Primary", value: primary, note: "" },
+    ...(staff ?? []),
+    ...(scraped ?? []),
+  ]) {
+    const value = entry.value.trim();
+    if (!value) continue;
+    const key = value.toLowerCase().replace(/\D/g, "") || value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ label: entry.label.trim() || "Contact", value, note: entry.note.trim() });
+  }
+  return out;
+}
+
+function mergeLabeledAddresses(
+  primary: string,
+  scraped: HotelStructured["contact"]["addresses"],
+  staff: HotelStructured["contact"]["addresses"],
+): HotelStructured["contact"]["addresses"] {
+  const seen = new Set<string>();
+  const out: HotelStructured["contact"]["addresses"] = [];
+  for (const entry of [
+    { label: "Primary", value: primary, note: "" },
+    ...(staff ?? []),
+    ...(scraped ?? []),
+  ]) {
+    const value = entry.value.trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ label: entry.label.trim() || "Address", value, note: entry.note.trim() });
+  }
+  return out;
+}
+
 /** Staff non-empty strings override scraped; arrays come from the form; images merge unique. */
 export function mergeStaffOverrides(
   scraped: HotelStructured,
   staff: HotelStructured,
 ): HotelStructured {
+  const phone = normPhone(pickStr(scraped.contact.phone, staff.contact.phone));
+  const address = pickStr(scraped.contact.address, staff.contact.address);
   return {
     hotel_name: pickStr(scraped.hotel_name, staff.hotel_name),
     website: scraped.website || staff.website,
     contact: {
-      phone: normPhone(pickStr(scraped.contact.phone, staff.contact.phone)),
+      phone,
       email: pickStr(scraped.contact.email, staff.contact.email),
-      address: pickStr(scraped.contact.address, staff.contact.address),
+      address,
+      phones: mergeLabeledContacts(phone, scraped.contact.phones, staff.contact.phones),
+      addresses: mergeLabeledAddresses(address, scraped.contact.addresses, staff.contact.addresses),
     },
     amenities: { ...staff.amenities },
     dining: staff.dining,
@@ -84,6 +132,14 @@ export function buildProvenance(
   p["contact.address"] = {
     value: merged.contact.address,
     source: src(scraped.contact.address, merged.contact.address),
+  };
+  p["contact.phones"] = {
+    value: merged.contact.phones,
+    source: src(scraped.contact.phones, merged.contact.phones),
+  };
+  p["contact.addresses"] = {
+    value: merged.contact.addresses,
+    source: src(scraped.contact.addresses, merged.contact.addresses),
   };
 
   for (const k of Object.keys(merged.amenities) as Array<keyof HotelStructured["amenities"]>) {

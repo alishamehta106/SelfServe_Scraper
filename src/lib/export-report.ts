@@ -70,8 +70,7 @@ function str(v: unknown): string {
 function gapNote(gap: GapReport | undefined, path: string): string | undefined {
   const g = gap?.[path];
   if (!g) return undefined;
-  const c = g.confidence !== undefined ? `scrape_confidence=${(g.confidence * 100).toFixed(0)}%` : "";
-  return [g.status, c, g.note].filter(Boolean).join(" · ");
+  return [g.status, g.note].filter(Boolean).join(" · ");
 }
 
 export function buildReadableExport(params: {
@@ -91,10 +90,12 @@ export function buildReadableExport(params: {
   const contactFilled = [data.contact.phone, data.contact.email, data.contact.address].filter(
     (x) => x.trim(),
   ).length;
+  const additionalPhoneCount = Math.max(0, (data.contact.phones?.length ?? 0) - 1);
+  const additionalAddressCount = Math.max(0, (data.contact.addresses?.length ?? 0) - 1);
   const contactSummary =
     contactFilled === 0
       ? "No contact details captured."
-      : `${contactFilled} of 3 contact slots have text.`;
+      : `${contactFilled} of 3 primary contact slots have text. ${additionalPhoneCount} additional phone(s), ${additionalAddressCount} additional address(es).`;
 
   const amenityLabels: Record<string, string> = {
     pool: "Pool",
@@ -102,20 +103,25 @@ export function buildReadableExport(params: {
     wifi: "Wi‑Fi",
     parking: "Parking",
     spa: "Spa",
+    breakfast: "Breakfast",
+    accessible_rooms: "Accessible rooms",
+    ev_charging: "EV charging",
+    meeting_space: "Meeting / event space",
   };
 
-  const amenitiesMissing: string[] = [];
+  const amenitiesOn: string[] = [];
+  const amenitiesOff: string[] = [];
   const amenityFields = (Object.keys(data.amenities) as Array<keyof HotelStructured["amenities"]>).map(
     (k) => {
       const path = `amenities.${k}`;
       const v = data.amenities[k];
-      const st = v ? "filled" : "empty";
-      if (!v) amenitiesMissing.push(amenityLabels[k] ?? k);
+      if (v) amenitiesOn.push(amenityLabels[k] ?? k);
+      else amenitiesOff.push(amenityLabels[k] ?? k);
       return {
         key: path,
         label: amenityLabels[k] ?? k,
         value: v,
-        status: st as "filled" | "empty",
+        status: "filled" as const,
         source: provSource(prov, path),
       };
     },
@@ -202,16 +208,32 @@ export function buildReadableExport(params: {
             status: data.contact.address.trim() ? "filled" : "empty",
             source: provSource(prov, "contact.address"),
           },
+          ...((data.contact.phones ?? []).map((entry, index) => ({
+            key: `contact.phones[${index}]`,
+            label: entry.label || `Phone ${index + 1}`,
+            value: `${entry.value}${entry.note ? ` (${entry.note})` : ""}`,
+            status: (entry.value.trim() ? "filled" : "empty") as "filled" | "empty",
+            source: provSource(prov, "contact.phones"),
+          }))),
+          ...((data.contact.addresses ?? []).map((entry, index) => ({
+            key: `contact.addresses[${index}]`,
+            label: entry.label || `Address ${index + 1}`,
+            value: `${entry.value}${entry.note ? ` (${entry.note})` : ""}`,
+            status: (entry.value.trim() ? "filled" : "empty") as "filled" | "empty",
+            source: provSource(prov, "contact.addresses"),
+          }))),
         ],
       },
       {
         id: "amenities",
         title: "Amenities",
         summary_line:
-          amenitiesMissing.length === 0
-            ? "All amenity toggles are on (verify against reality)."
-            : `Not indicated or off: ${amenitiesMissing.join(", ")}.`,
-        missing_in_category: amenitiesMissing,
+          amenitiesOn.length === 0
+            ? `No amenity toggles are on. Not offered or unchecked: ${amenitiesOff.join(", ")}.`
+            : `Available: ${amenitiesOn.join(", ")}. Not offered or unchecked: ${
+                amenitiesOff.length ? amenitiesOff.join(", ") : "none"
+              }.`,
+        missing_in_category: [],
         fields: amenityFields,
       },
       {

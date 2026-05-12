@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/db";
+import { validateStructuredFields } from "@/lib/field-validation";
 import { buildProvenance, mergeStaffOverrides } from "@/lib/normalize";
 import { hotelStructuredSchema, type ScrapedPayload } from "@/lib/schema/hotel";
 
@@ -42,6 +43,15 @@ export async function POST(
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten() },
+      { status: 422 },
+    );
+  }
+
+  const fieldIssues = validateStructuredFields(parsed.data);
+  const blockingIssues = fieldIssues.filter((issue) => issue.severity === "error");
+  if (blockingIssues.length) {
+    return NextResponse.json(
+      { error: "Field format validation failed", details: blockingIssues },
       { status: 422 },
     );
   }

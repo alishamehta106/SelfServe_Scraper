@@ -15,6 +15,12 @@ export const imageProbeEntrySchema = z.object({
   error: z.string().optional(),
 });
 
+export const labeledContactSchema = z.object({
+  label: z.string(),
+  value: z.string(),
+  note: z.string(),
+});
+
 /** Canonical hotel payload (scraper target, form, export). */
 export const hotelStructuredSchema = z.object({
   hotel_name: z.string(),
@@ -23,6 +29,8 @@ export const hotelStructuredSchema = z.object({
     phone: z.string(),
     email: z.string(),
     address: z.string(),
+    phones: z.array(labeledContactSchema).optional().transform((x) => x ?? []),
+    addresses: z.array(labeledContactSchema).optional().transform((x) => x ?? []),
   }),
   amenities: z.object({
     pool: z.boolean(),
@@ -30,6 +38,10 @@ export const hotelStructuredSchema = z.object({
     wifi: z.boolean(),
     parking: z.boolean(),
     spa: z.boolean(),
+    breakfast: z.boolean().optional().default(false),
+    accessible_rooms: z.boolean().optional().default(false),
+    ev_charging: z.boolean().optional().default(false),
+    meeting_space: z.boolean().optional().default(false),
   }),
   dining: z.array(
     z.object({
@@ -60,6 +72,7 @@ export const hotelStructuredSchema = z.object({
 });
 
 export type HotelStructured = z.infer<typeof hotelStructuredSchema>;
+export type LabeledContact = z.infer<typeof labeledContactSchema>;
 export type ImageDetail = z.infer<typeof imageDetailSchema>;
 export type ImageProbeEntry = z.infer<typeof imageProbeEntrySchema>;
 
@@ -89,13 +102,17 @@ export function emptyHotelStructured(website: string): HotelStructured {
   return {
     hotel_name: "",
     website,
-    contact: { phone: "", email: "", address: "" },
+    contact: { phone: "", email: "", address: "", phones: [], addresses: [] },
     amenities: {
       pool: false,
       gym: false,
       wifi: false,
       parking: false,
       spa: false,
+      breakfast: false,
+      accessible_rooms: false,
+      ev_charging: false,
+      meeting_space: false,
     },
     dining: [],
     services: [],

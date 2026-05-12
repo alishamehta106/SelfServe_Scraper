@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 
 import { buildReadableExport, exportToLongFormCsv } from "@/lib/export-report";
 import { prisma } from "@/lib/db";
-import { isAnyAccessToken } from "@/lib/hotel-tokens";
-import type { GapReport, HotelStructured, ProvenanceEntry } from "@/lib/schema/hotel";
+import { isOperatorToken } from "@/lib/hotel-tokens";
+import type { GapReport, HotelStructured, ProvenanceEntry, ScrapedPayload } from "@/lib/schema/hotel";
 
 export async function GET(
   req: Request,
@@ -15,21 +15,12 @@ export async function GET(
   const format = (url.searchParams.get("format") ?? "json").toLowerCase();
 
   const hotel = await prisma.hotel.findUnique({ where: { id } });
-  if (!hotel || !isAnyAccessToken(hotel, token)) {
+  if (!hotel || !isOperatorToken(hotel, token)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  if (hotel.status !== "completed" || !hotel.normalizedData) {
-    return NextResponse.json(
-      {
-        error:
-          "Export is available after the review form is submitted. Complete the review first.",
-      },
-      { status: 409 },
-    );
-  }
-
-  const data = hotel.normalizedData as unknown as HotelStructured;
+  const scrapedPayload = hotel.scrapedData as unknown as ScrapedPayload;
+  const data = (hotel.normalizedData as unknown as HotelStructured | null) ?? scrapedPayload.structured;
   const gapReport = hotel.gapReport as unknown as GapReport;
   const provenance = hotel.provenance as Record<string, ProvenanceEntry<unknown>> | null;
 
@@ -56,7 +47,12 @@ export async function GET(
 
   const payload = {
     ...readable,
-    scrape_gap_reference: gapReport,
+    scrape_gap_reference: Object.fromEntries(
+      Object.entries(gapReport).map(([path, report]) => [
+        path,
+        report.note ? { status: report.status, note: report.note } : { status: report.status },
+      ]),
+    ),
     canonical_hotel: data,
   };
 

@@ -30,6 +30,16 @@ function captionForImg($: cheerio.CheerioAPI, el: Element): string {
   return "";
 }
 
+function cleanImageText(input: string): string {
+  return input
+    .replace(/\bItem\s*\d+\b/gi, " ")
+    .replace(/\bLink to Larger Image\b/gi, " ")
+    .replace(/\b(image|photo)\s+\d+\s+of\s+\d+\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 220);
+}
+
 const IMG_EXT = /\.(jpg|jpeg|png|webp|gif)(\?|$)/i;
 
 function isLikelyPhotoUrl(href: string): boolean {
@@ -50,7 +60,7 @@ export function extractImageAssets(html: string, pageUrl: string): ImageAsset[] 
       if (!isLikelyPhotoUrl(u)) return;
       if (seen.has(u)) return;
       seen.add(u);
-      out.push({ url: u, alt: "", caption: "og/twitter meta" });
+      out.push({ url: u, alt: "", caption: "" });
     } catch {
       /* skip */
     }
@@ -68,9 +78,9 @@ export function extractImageAssets(html: string, pageUrl: string): ImageAsset[] 
     if (!isLikelyPhotoUrl(abs)) return;
     if (seen.has(abs)) return;
     seen.add(abs);
-    const alt = ($(el).attr("alt") || "").trim().slice(0, 400);
-    const title = ($(el).attr("title") || "").trim().slice(0, 200);
-    const caption = captionForImg($, el) || title;
+    const alt = cleanImageText($(el).attr("alt") || "");
+    const title = cleanImageText($(el).attr("title") || "");
+    const caption = cleanImageText(captionForImg($, el) || title);
     out.push({ url: abs, alt, caption });
   });
 

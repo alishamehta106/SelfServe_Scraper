@@ -2,6 +2,7 @@ import { randomBytes } from "crypto";
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/db";
+import { buildDemoScrapedPayload } from "@/lib/demo-hotel";
 import { detectGaps } from "@/lib/gap-detection";
 import { scrapeHotelWebsite } from "@/lib/scraper/crawl";
 
@@ -18,13 +19,19 @@ export async function POST(req: Request) {
     typeof body === "object" && body !== null && "url" in body
       ? String((body as { url?: unknown }).url ?? "").trim()
       : "";
-  if (!url) {
+  const useDemo =
+    typeof body === "object" &&
+    body !== null &&
+    "demo" in body &&
+    (body as { demo?: unknown }).demo === true;
+
+  if (!url && !useDemo) {
     return NextResponse.json({ error: "Missing url" }, { status: 400 });
   }
 
   let scraped;
   try {
-    scraped = await scrapeHotelWebsite(url);
+    scraped = useDemo ? buildDemoScrapedPayload() : await scrapeHotelWebsite(url);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Scrape failed";
     return NextResponse.json({ error: msg }, { status: 422 });
@@ -41,7 +48,7 @@ export async function POST(req: Request) {
 
   const hotel = await prisma.hotel.create({
     data: {
-      websiteUrl: url,
+      websiteUrl: scraped.structured.website || url,
       reviewToken,
       operatorToken,
       scrapedData: scraped as object,

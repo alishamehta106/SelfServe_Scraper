@@ -1,13 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
-  --card: #ffffff;
-  --muted: #64748b;
-  --accent: #2563eb;
-  --warning: #d97706;
-  --border: #e2e8f0;
+  --background: #eee8e2;
+  --foreground: #111015;
+  --card: #fffdfb;
+  --muted: #59515f;
+  --accent: #7f1d86;
+  --accent-dark: #4a005f;
+  --accent-2: #dfff00;
+  --lavender: #ead6f5;
+  --warning: #a96912;
+  --border: #ded7d0;
+  --soft: #e8dfd8;
+  --danger: #b42318;
 }
 
 @theme inline {
@@ -16,7 +21,10 @@
 }
 
 body {
-  background: var(--background);
+  background:
+    radial-gradient(circle at 18% 0%, rgb(126 29 134 / 12%), transparent 28rem),
+    radial-gradient(circle at 86% 12%, rgb(74 0 95 / 10%), transparent 34rem),
+    var(--background);
   color: var(--foreground);
   font-family:
     system-ui,
@@ -25,4 +33,133 @@ body {
     "Segoe UI",
     Roboto,
     sans-serif;
+}
+
+::selection {
+  background: var(--accent-2);
+  color: var(--foreground);
+}
+
+a {
+  color: var(--accent);
+}
+
+.ss-shell {
+  width: min(1120px, calc(100vw - 32px));
+  margin: 0 auto;
+}
+
+.ss-panel {
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 94%, white);
+  box-shadow: 0 22px 60px rgb(52 43 38 / 16%);
+}
+
+.ss-card {
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: 0 16px 44px rgb(52 43 38 / 12%);
+}
+
+.ss-field {
+  border: 1px solid var(--border);
+  background: #fffdfb;
+  color: var(--foreground);
+  outline: none;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    background 140ms ease;
+}
+
+.ss-field:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgb(127 29 134 / 16%);
+}
+
+.ss-button {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fffdfb;
+  box-shadow: 0 18px 34px rgb(127 29 134 / 28%);
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    background 140ms ease;
+}
+
+.ss-button:hover {
+  background: var(--accent-dark);
+  box-shadow: 0 22px 40px rgb(127 29 134 / 34%);
+  transform: translateY(-1px);
+}
+
+.ss-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+.ss-button-secondary {
+  border: 1px solid var(--border);
+  background: #fffdfb;
+  color: var(--foreground);
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+.ss-button-secondary:hover {
+  border-color: var(--accent);
+  background: #f8f3ef;
+  transform: translateY(-1px);
+}
+
+.ss-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgb(127 29 134 / 20%);
+  background: rgb(234 214 245 / 80%);
+  color: var(--accent);
+}
+
+.ss-muted {
+  color: var(--muted);
+}
+
+.ss-link-box {
+  border: 1px solid var(--border);
+  background: #fffdfb;
+}
+
+.ss-flag {
+  border-color: rgb(183 123 36 / 45%) !important;
+  background: rgb(255 247 226 / 85%) !important;
+}
+
+.ss-hero {
+  border: 1px solid rgb(255 255 255 / 14%);
+  background:
+    radial-gradient(circle at 72% 40%, rgb(119 0 128 / 62%), transparent 25rem),
+    linear-gradient(145deg, #551a6b 0%, #3f0056 48%, #58006d 100%);
+  color: #fbf8f3;
+  box-shadow: 0 28px 70px rgb(74 0 95 / 28%);
+}
+
+.ss-hero .ss-muted {
+  color: rgb(251 248 243 / 82%);
+}
+
+.ss-export-button {
+  border: 1px solid var(--accent);
+  background: #fffdfb;
+  color: var(--foreground);
+  box-shadow: 0 16px 34px rgb(52 43 38 / 16%);
+}
+
+.ss-export-button:hover {
+  background: var(--accent);
+  color: #fffdfb;
 }
