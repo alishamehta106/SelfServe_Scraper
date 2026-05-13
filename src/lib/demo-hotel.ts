@@ -72,11 +72,13 @@ export function buildDemoScrapedPayload(): ScrapedPayload {
             url: "https://images.unsplash.com/photo-1566073771259-6a8506099945",
             alt: "Hotel exterior",
             caption: "Potential exterior image found on the homepage.",
+            category: "Property",
           },
           {
             url: "https://images.unsplash.com/photo-1551882547-ff40c63fe5fa",
             alt: "Guest room",
             caption: "Potential guest room image found on the rooms page.",
+            category: "Rooms",
           },
         ],
       },

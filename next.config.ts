@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
   outputFileTracingRoot: path.join(__dirname),
-  serverExternalPackages: ["sharp"],
+  serverExternalPackages: ["sharp", "playwright"],
 };
 
 export default nextConfig;

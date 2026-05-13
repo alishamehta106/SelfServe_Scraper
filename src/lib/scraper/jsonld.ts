@@ -19,6 +19,15 @@ const HOTEL_TYPES = new Set([
 ]);
 
 const FOOD_TYPES = new Set(["Restaurant", "FoodEstablishment", "BarOrPub", "CafeOrCoffeeShop"]);
+const DAY_MAP: Record<string, string> = {
+  Mo: "Mon",
+  Tu: "Tue",
+  We: "Wed",
+  Th: "Thu",
+  Fr: "Fri",
+  Sa: "Sat",
+  Su: "Sun",
+};
 
 function asArray<T>(x: T | T[] | undefined): T[] {
   if (x === undefined || x === null) return [];
@@ -37,9 +46,9 @@ function flattenLd(input: unknown): unknown[] {
 
 function readHours(node: Record<string, unknown>): string {
   const oh = node.openingHoursSpecification ?? node.openingHours;
-  if (typeof oh === "string") return oh;
+  if (typeof oh === "string") return formatHours(oh);
   if (Array.isArray(oh)) {
-    return oh
+    return formatHours(oh
       .map((x) => {
         if (typeof x === "string") return x;
         if (x && typeof x === "object") {
@@ -49,9 +58,24 @@ function readHours(node: Record<string, unknown>): string {
         return "";
       })
       .filter(Boolean)
-      .join(" | ");
+      .join(" | "));
   }
   return "";
+}
+
+function formatHours(input: string): string {
+  return input
+    .split(/\s*\|\s*/)
+    .map((part) =>
+      part
+        .replace(/\b(Mo|Tu|We|Th|Fr|Sa|Su)\b/g, (day) => DAY_MAP[day] ?? day)
+        .replace(/\b(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})\b/g, "$1:$2 - $3:$4")
+        .replace(/,\s*/g, ", ")
+        .replace(/\s+/g, " ")
+        .trim(),
+    )
+    .filter(Boolean)
+    .join("\n");
 }
 
 function readAddress(node: Record<string, unknown>): string {

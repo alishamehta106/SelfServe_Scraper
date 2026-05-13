@@ -35,6 +35,17 @@ function countMatches(text: string, re: RegExp): number {
   return [...text.matchAll(new RegExp(re.source, flags))].length;
 }
 
+function imageKey(href: string): string {
+  try {
+    const url = new URL(href);
+    url.hash = "";
+    url.search = "";
+    return url.href.toLowerCase();
+  } catch {
+    return href.toLowerCase();
+  }
+}
+
 function amenityScore(text: string, key: keyof typeof KEYWORDS): number {
   const t = text.toLowerCase();
   const positive = KEYWORDS[key];
@@ -153,10 +164,20 @@ function firstMatchGroup(re: RegExp, text: string, group = 2): { value: string; 
 
 const SECTION_STOP =
   /\b(check[-\s]?in|check[-\s]?out|arrival|departure|amenit|room|dining|restaurant|parking|accessibility|privacy|terms|faq|contact|location|gallery|newsletter)\b/i;
+const PET_POLICY_SIGNAL =
+  /\b(pet policy|pets? allowed|dogs? allowed|cats? allowed|service animals?|fee|deposit|\$\s?\d|per stay|per night|weight|lbs?\.?|pounds?|maximum|max|limit|restrictions?|not allowed|prohibited|non-refundable|cleaning fee)\b/i;
+const PET_MARKETING_ONLY =
+  /\b(pet-friendly|pet friendly)\b/i;
+const POLICY_QUESTION =
+  /^\s*(?:are|do|does|what|when|where|which|who|how|can|is|in)\b[^.!?]{0,180}\?\s*$/i;
 
 function cleanPolicyCandidate(lines: string[]): string {
   return lines
+    .flatMap((line) => line.split(/(?<=[?.!])\s+/))
+    .filter((line) => !POLICY_QUESTION.test(line))
     .join(" ")
+    .replace(/^\s*(?:pet policy|cancellation policy|smoking policy)\s*[:\-]\s*/i, "")
+    .replace(/\b(?:are pets allowed|do you allow pets|what is your pet policy|what is the pet policy|what is your cancellation policy|what is the cancellation policy|what is your smoking policy|what is the smoking policy|are there restrictions for weight, height or types)\?\s*/gi, "")
     .replace(/\s+/g, " ")
     .replace(/\s+([.,;:])/g, "$1")
     .trim();
@@ -193,24 +214,68 @@ function extractPolicyBlock(
   return { value: "", conf: 0 };
 }
 
+function extractPetPolicyBlock(text: string): { value: string; conf: number } {
+  const candidate = extractPolicyBlock(text, /\bpet(s)?\b|\bdog(s)?\b|\bcat(s)?\b|\banimal(s)?\b/i, PET_POLICY_SIGNAL);
+  if (!candidate.value) return candidate;
+
+  const hasPolicyDetail = PET_POLICY_SIGNAL.test(candidate.value);
+  const marketingOnly =
+    PET_MARKETING_ONLY.test(candidate.value) &&
+    !/\b(pet policy|pets? allowed|dogs? allowed|cats? allowed|service animals?|fee|deposit|\$\s?\d|weight|lbs?\.?|pounds?|maximum|max|limit|restrictions?|not allowed|prohibited)\b/i.test(
+      candidate.value,
+    );
+
+  if (!hasPolicyDetail || marketingOnly) return { value: "", conf: 0 };
+  return candidate;
+}
+
 const ROOM_LINE = /^(?:•|-|\*|\d+\.)\s*(.{8,80})$/gm;
 const SUITE_WORDS =
   /\b(standard|deluxe|suite|king|queen|twin|double|ocean\s*view|city\s*view|room|studio)\b/i;
+const ROOM_NOISE =
+  /\b(link to larger image|image|photo|gallery|view all|book now|reserve|check availability|amenities|policy|dining|restaurant|parking|address|phone|email|calendar|journal|press|article|decor|décor|fitness|telephone|workspace|pet|feeder|coffee|bottled water|bicycles?|hydrow|tonal|market street|complimentary|on-site|in-room|audible|messages|located|larger|guest room)\b/i;
+const ROOM_NAME_PATTERN =
+  /\b(?:classic|premier|deluxe|standard|superior|executive|accessible|ada|beacon hill|city view|studio|suite|king|queen|double|twin)\b/i;
+
+function cleanRoomType(input: string): string {
+  return input
+    .replace(/\bItem\s*\d+\b/gi, " ")
+    .replace(/\bLink to Larger Image\b/gi, " ")
+    .replace(/^\s*Rooms?\s*&\s*Suites?\s*/i, "")
+    .replace(/^\s*(?:Rooms?|Suites?|Accommodations?)\s*[:\-]\s*/i, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:])/g, "$1")
+    .trim();
+}
+
+function isLikelyRoomType(input: string): boolean {
+  const value = cleanRoomType(input);
+  if (!SUITE_WORDS.test(value)) return false;
+  if (!ROOM_NAME_PATTERN.test(value)) return false;
+  if (ROOM_NOISE.test(value)) return false;
+  if (/\||\d{3,}|[.!?]/.test(value)) return false;
+  if (/^\s*[•*-]/.test(input)) return false;
+  const words = value.split(/\s+/);
+  if (value.length < 4 || value.length > 70) return false;
+  if (words.length > 7) return false;
+  if (/\b(with|including|includes?|located|larger|use of)\b/i.test(value)) return false;
+  return true;
+}
 
 function extractRoomTypes(text: string): { list: string[]; conf: number } {
   const lines = text.split(/\n/);
   const out = new Set<string>();
   for (const line of lines) {
-    const t = line.trim();
-    if (SUITE_WORDS.test(t) && t.length > 5 && t.length < 120) {
+    const t = cleanRoomType(line);
+    if (isLikelyRoomType(t)) {
       out.add(t);
     }
   }
   let m: RegExpExecArray | null;
   const re = new RegExp(ROOM_LINE);
   while ((m = re.exec(text)) !== null) {
-    const v = m[1].trim();
-    if (SUITE_WORDS.test(v)) out.add(v);
+    const v = cleanRoomType(m[1]);
+    if (isLikelyRoomType(v)) out.add(v);
   }
   const list = [...out].slice(0, 20);
   const conf = list.length ? 0.5 : 0;
@@ -235,6 +300,15 @@ function extractServices(text: string): { list: string[]; conf: number } {
 }
 
 const GENERIC_RESTAURANT = /^(restaurant|dining|our\s+dining|food\s*&\s*beverage|f\s*&\s*b|the\s+restaurant)$/i;
+const DAY_MAP: Record<string, string> = {
+  Mo: "Mon",
+  Tu: "Tue",
+  We: "Wed",
+  Th: "Thu",
+  Fr: "Fri",
+  Sa: "Sat",
+  Su: "Sun",
+};
 
 function isWeakRestaurantRow(
   row: { restaurant_name: string; hours: string; menu_items: string[] },
@@ -242,7 +316,7 @@ function isWeakRestaurantRow(
 ): boolean {
   const n = row.restaurant_name.trim();
   if (!n) return true;
-  if (GENERIC_RESTAURANT.test(n)) return true;
+  if (GENERIC_RESTAURANT.test(n) && !row.hours.trim() && !row.menu_items.length) return true;
   const lower = n.toLowerCase();
   for (const t of pageTitles) {
     const tl = t.trim().toLowerCase();
@@ -255,33 +329,111 @@ function isWeakRestaurantRow(
   return false;
 }
 
-const RESTAURANT_SECTION = /\b(restaurant|dining|bistro|grill|café|cafe)\b[^]{0,1600}/gi;
+const DINING_START =
+  /\b(restaurant|restaurants|dining|bistro|grill|café|cafe|bar|breakfast|lunch|dinner|menu)\b/i;
+const DINING_STOP =
+  /\b(pet policy|pets?|parking|valet|garage|check[-\s]?in|check[-\s]?out|cancellation|smoking|accessibility|rooms?|suites?|amenities|services|contact|location|gallery|faq)\b/i;
+const MENU_PRICE_RE = /(?:[$€£]\s?\d{1,4}(?:[.,]\d{2})?|\b\d{1,4}(?:[.,]\d{2})?\s?(?:USD|EUR|GBP)\b)/i;
+const MENU_NOISE =
+  /\b(menu|download|pdf|view|order|reserve|reservation|hours?|open|closed|restaurant|dining)\b/i;
+const MENU_HARD_REJECT =
+  /\b(pet|pets|dog|cat|animal|parking|valet|vehicle|oversized|guest room|per stay|per night|fee|deposit|policy|restriction|check[-\s]?in|check[-\s]?out|cancellation|smoking)\b/i;
+const FOOD_WORDS =
+  /\b(toast|egg|omelet|pancake|waffle|salad|soup|sandwich|burger|steak|chicken|fish|salmon|pasta|pizza|taco|dessert|cake|coffee|tea|wine|beer|cocktail|breakfast|lunch|dinner|brunch|appetizer|entree|entrée|sides?)\b/i;
+const DINING_HOURS_LINE =
+  /\b(?:(?:Mo|Tu|We|Th|Fr|Sa|Su)(?:-(?:Mo|Tu|We|Th|Fr|Sa|Su))?\s+)?\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?\s*[-–]\s*\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?(?:\s*,\s*\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?\s*[-–]\s*\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?)*/gi;
+
+function normalizeDiningHours(input: string): string {
+  return input
+    .split(/\s*\|\s*/)
+    .map((part) =>
+      part
+        .replace(/\b(Mo|Tu|We|Th|Fr|Sa|Su)\b/g, (day) => DAY_MAP[day] ?? day)
+        .replace(/\b(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})\b/g, "$1:$2 - $3:$4")
+        .replace(/,\s*/g, ", ")
+        .replace(/\s+/g, " ")
+        .trim(),
+    )
+    .filter(Boolean)
+    .join("\n");
+}
+
+function cleanMenuLine(line: string): string {
+  return line
+    .replace(/\s+/g, " ")
+    .replace(/\s+([.,;:])/g, "$1")
+    .replace(/\b(add|substitute)\s+\$?\d+(?:\.\d{2})?\b/gi, "")
+    .trim()
+    .slice(0, 140);
+}
+
+function extractMenuItemsFromBlock(block: string): string[] {
+  const out = new Set<string>();
+  for (const raw of block.split(/\n|•|\u2022/)) {
+    const line = cleanMenuLine(raw);
+    if (line.length < 6 || line.length > 140) continue;
+    if (!MENU_PRICE_RE.test(line)) continue;
+    if (MENU_HARD_REJECT.test(line)) continue;
+    if (!FOOD_WORDS.test(line) && !/[A-Z][A-Za-z '&()]+ - [$€£]/.test(line)) continue;
+    if (MENU_NOISE.test(line) && line.length < 24) continue;
+    out.add(line.replace(/\s[-–—]\s*/g, " - "));
+  }
+  for (const match of block.matchAll(/([A-Z][A-Za-z0-9 '&().,/+-]{3,70})\s+([-–—.]?\s*)?([$€£]\s?\d{1,4}(?:[.,]\d{2})?)/g)) {
+    const line = cleanMenuLine(`${match[1]} - ${match[3]}`);
+    if (MENU_HARD_REJECT.test(line)) continue;
+    if (!FOOD_WORDS.test(line) && !/[A-Z][A-Za-z '&()]+ - [$€£]/.test(line)) continue;
+    if (line.length >= 6) out.add(line);
+  }
+  return [...out].slice(0, 20);
+}
+
+function diningBlocksFromText(text: string): string[] {
+  const lines = text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const blocks: string[] = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!DINING_START.test(lines[i])) continue;
+    const chunk = [lines[i]];
+    for (let j = i + 1; j < lines.length && chunk.length < 24; j += 1) {
+      const line = lines[j];
+      if (DINING_STOP.test(line) && !DINING_START.test(line)) break;
+      if (line.length > 260) break;
+      chunk.push(line);
+    }
+    const block = chunk.join("\n");
+    if (MENU_PRICE_RE.test(block) || /\b(open daily|breakfast|lunch|dinner|\d{1,2}:\d{2})\b/i.test(block)) {
+      blocks.push(block);
+    }
+  }
+
+  return blocks.slice(0, 10);
+}
 
 function extractDiningHeuristic(
   text: string,
   pageTitles: string[],
 ): HotelStructured["dining"] {
-  const blocks: string[] = [];
-  let m: RegExpExecArray | null;
-  const re = new RegExp(RESTAURANT_SECTION);
-  while ((m = re.exec(text)) !== null) {
-    blocks.push(m[0]);
-  }
+  const blocks = diningBlocksFromText(text);
   if (!blocks.length) return [];
   const dining: HotelStructured["dining"] = [];
   for (const block of blocks.slice(0, 6)) {
     const nameMatch = block.match(
       /\b([A-Z][\w\s&']{1,48})\s+(?:Restaurant|Grill|Bistro|Café|Cafe|Bar)\b/,
     );
-    const hoursMatch = block.match(
-      /\b(\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?\s*[-–]\s*\d{1,2}:\d{2}\s*(?:a\.?m\.?|p\.?m\.?)?|open\s+daily[^.\n]{0,60}|breakfast|lunch|dinner)\b/i,
-    );
-    const menuItems = [...block.matchAll(/\b(?:signature|chef|dish|menu)\b[^.\n]{0,80}/gi)]
+    const hourLines = [...block.matchAll(DINING_HOURS_LINE)].map((match) => match[0]);
+    const openDaily = block.match(/\bopen\s+daily[^.\n]{0,60}/i)?.[0] ?? "";
+    const pricedMenuItems = extractMenuItemsFromBlock(block);
+    const menuItems = pricedMenuItems.length
+      ? pricedMenuItems
+      : [...block.matchAll(/\b(?:signature|chef|dish|menu)\b[^.\n]{0,80}/gi)]
       .map((x) => x[0].trim())
       .slice(0, 10);
     const row = {
-      restaurant_name: nameMatch ? nameMatch[1].trim() : "",
-      hours: hoursMatch ? hoursMatch[1].trim() : "",
+      restaurant_name: nameMatch ? nameMatch[1].trim() : pricedMenuItems.length ? "Dining" : "",
+      hours: normalizeDiningHours(hourLines.length ? hourLines.join(" | ") : openDaily),
       menu_items: menuItems,
     };
     if (!isWeakRestaurantRow(row, pageTitles)) {
@@ -431,11 +583,7 @@ export function extractFromAggregated(
   structured.policies.check_out = co.value;
   fc["policies.check_out"] = co.conf;
 
-  const pet = extractPolicyBlock(
-    fullText,
-    /\bpet(s)?\b|\bdog(s)?\b|\bcat(s)?\b|\banimal(s)?\b/i,
-    /\b(pet|dog|cat|animal|service animal|fee|allowed|welcome|not allowed|prohibited)\b/i,
-  );
+  const pet = extractPetPolicyBlock(fullText);
   structured.policies.pet_policy = pet.value;
   fc["policies.pet_policy"] = pet.conf;
 
@@ -473,12 +621,13 @@ export function extractFromAggregated(
   structured.dining = mergeDining(jsonLd.restaurants, heurDining);
   fc["dining"] = structured.dining.length ? (jsonLd.restaurants.length ? 0.88 : 0.55) : 0;
 
-  const assets: Array<{ url: string; alt: string; caption: string }> = [];
+  const assets: Array<{ url: string; alt: string; caption: string; category: string }> = [];
   const urls = new Set<string>();
   for (const { url, html } of htmlByUrl) {
     for (const a of extractImageAssets(html, url)) {
-      if (urls.has(a.url)) continue;
-      urls.add(a.url);
+      const key = imageKey(a.url);
+      if (urls.has(key)) continue;
+      urls.add(key);
       assets.push(a);
     }
   }

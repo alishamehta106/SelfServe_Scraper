@@ -96,7 +96,7 @@ export default function HomePage() {
             disabled={loading}
             className="ss-button inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold"
           >
-            {loading ? "Scraping..." : "Run scraper"}
+            {loading ? "Checking..." : "Run scraper"}
           </button>
           <button
             type="button"

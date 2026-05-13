@@ -6,17 +6,39 @@ import type { HotelStructured, ScrapedPayload } from "@/lib/schema/hotel";
 import { fetchRobotsRules, isUrlAllowedByRobots } from "@/lib/robots";
 
 import { extractJsonLdHints } from "./jsonld";
+import { closeRenderedBrowser, fetchRenderedHtml, newRenderContext } from "./rendered";
 import { discoverSitemapUrls } from "./sitemap";
 
-const MAX_PAGES = 45;
-const MAX_DEPTH = 5;
-const MAX_SITEMAP_SEED = 35;
+const MAX_PAGES = 90;
+const MAX_DEPTH = 7;
+const MAX_SITEMAP_SEED = 80;
 const FETCH_TIMEOUT_MS = 12000;
+const MAX_RENDERED_PAGES = 20;
 
 const PRIORITY_KEYWORDS =
-  /amenit|room|dining|restaurant|service|polic|contact|about|facilit|gallery|meet|event|spa|pool|stay|location|wedding|banquet|menu|eat|drink/i;
+  /amenit|room|suite|accommodation|dining|restaurant|service|polic|contact|about|facilit|gallery|meet|event|spa|pool|stay|location|wedding|banquet|menu|eat|drink|faq|offer|experience/i;
 
 const USER_AGENT = "HotelIngestMVP/0.1 (+research; contact: local)";
+
+const COMMON_PAGE_PATHS = [
+  "/rooms",
+  "/suites",
+  "/accommodations",
+  "/amenities",
+  "/dining",
+  "/restaurants",
+  "/restaurant",
+  "/menu",
+  "/services",
+  "/policies",
+  "/contact",
+  "/location",
+  "/gallery",
+  "/meetings",
+  "/events",
+  "/spa",
+  "/offers",
+];
 
 function sameOrigin(a: string, b: string): boolean {
   try {
@@ -45,12 +67,12 @@ function scoreLink(href: string, anchor: string): number {
   const text = anchor.toLowerCase();
   if (PRIORITY_KEYWORDS.test(path)) s += 3;
   if (PRIORITY_KEYWORDS.test(text)) s += 2;
-  if (/contact|location|about|dining|eat/.test(path)) s += 1;
+  if (/contact|location|about|dining|eat|menu|room|suite|amenit|polic/.test(path)) s += 1;
   return s;
 }
 
 function shouldSkipPath(href: string): boolean {
-  return /\.(pdf|zip|xml|rss)(\?|$)/i.test(href);
+  return /\.(pdf|zip|xml|rss|jpg|jpeg|png|webp|gif|svg|css|js|ico)(\?|$)/i.test(href);
 }
 
 async function fetchHtml(url: string): Promise<{ html: string; title: string } | null> {
@@ -72,6 +94,35 @@ async function fetchHtml(url: string): Promise<{ html: string; title: string } |
   }
 }
 
+function shouldRenderPage(
+  url: string,
+  score: number,
+  got: { html: string; title: string } | null,
+): boolean {
+  if (!got) return true;
+  const text = visibleTextFromHtml(got.html);
+  if (score >= 70) return true;
+  if (score >= 40 && text.length < 2500) return true;
+  if (collectLinks(got.html, url).length < 4 && text.length < 3500) return true;
+  return false;
+}
+
+function betterHtml(
+  staticHtml: { html: string; title: string } | null,
+  renderedHtml: { html: string; title: string } | null,
+): { html: string; title: string } | null {
+  if (!renderedHtml) return staticHtml;
+  if (!staticHtml) return renderedHtml;
+  const staticText = visibleTextFromHtml(staticHtml.html);
+  const renderedText = visibleTextFromHtml(renderedHtml.html);
+  const staticLinks = staticHtml.html.match(/\bhref=/gi)?.length ?? 0;
+  const renderedLinks = renderedHtml.html.match(/\bhref=/gi)?.length ?? 0;
+  if (renderedText.length > staticText.length * 1.15 || renderedLinks > staticLinks) {
+    return renderedHtml;
+  }
+  return staticHtml;
+}
+
 function collectOpenGraph(html: string): { ogTitle?: string; ogSiteName?: string } {
   const $ = cheerio.load(html);
   return {
@@ -80,23 +131,44 @@ function collectOpenGraph(html: string): { ogTitle?: string; ogSiteName?: string
   };
 }
 
+function pushLink(
+  out: Array<{ href: string; anchor: string; score: number }>,
+  rawHref: string | undefined,
+  pageUrl: string,
+  anchor: string,
+) {
+  const href = rawHref?.trim();
+  if (!href || href.startsWith("mailto:") || href.startsWith("tel:") || href.startsWith("#")) return;
+  let abs: string;
+  try {
+    abs = new URL(href, pageUrl).href;
+  } catch {
+    return;
+  }
+  if (!/^https?:\/\//i.test(abs)) return;
+  if (!sameOrigin(abs, pageUrl)) return;
+  if (shouldSkipPath(abs)) return;
+  out.push({ href: normalizeUrlKey(abs), anchor, score: scoreLink(abs, anchor) });
+}
+
 function collectLinks(html: string, pageUrl: string): Array<{ href: string; anchor: string; score: number }> {
   const $ = cheerio.load(html);
   const out: Array<{ href: string; anchor: string; score: number }> = [];
   $("a[href]").each((_, el) => {
-    const href = $(el).attr("href");
-    if (!href || href.startsWith("mailto:") || href.startsWith("tel:") || href.startsWith("#")) return;
-    let abs: string;
-    try {
-      abs = new URL(href, pageUrl).href;
-    } catch {
-      return;
-    }
-    if (!/^https?:\/\//i.test(abs)) return;
-    if (!sameOrigin(abs, pageUrl)) return;
-    if (shouldSkipPath(abs)) return;
+    pushLink(out, $(el).attr("href"), pageUrl, $(el).text().trim());
+  });
+  $("[data-href],[data-url],[data-link],[data-page],[data-target-url]").each((_, el) => {
     const anchor = $(el).text().trim();
-    out.push({ href: normalizeUrlKey(abs), anchor, score: scoreLink(abs, anchor) });
+    for (const attr of ["data-href", "data-url", "data-link", "data-page", "data-target-url"]) {
+      pushLink(out, $(el).attr(attr), pageUrl, anchor);
+    }
+  });
+  $("[onclick]").each((_, el) => {
+    const onclick = $(el).attr("onclick") ?? "";
+    const anchor = $(el).text().trim();
+    for (const match of onclick.matchAll(/['"]([^'"]+\/[^'"]*)['"]/g)) {
+      pushLink(out, match[1], pageUrl, anchor);
+    }
   });
   return out;
 }
@@ -120,6 +192,12 @@ export async function scrapeHotelWebsite(startUrl: string): Promise<ScrapedPaylo
     { url: normalizedStart, depth: 0, score: 100 },
   ];
 
+  for (const path of COMMON_PAGE_PATHS) {
+    const u = normalizeUrlKey(new URL(path, originUrl.origin).href);
+    if (!isUrlAllowedByRobots(robotsRules, u)) continue;
+    queue.push({ url: u, depth: 0, score: 38 });
+  }
+
   const sitemapUrls = await discoverSitemapUrls(originUrl.origin, MAX_SITEMAP_SEED);
   for (const u of sitemapUrls) {
     const nu = normalizeUrlKey(u);
@@ -134,39 +212,52 @@ export async function scrapeHotelWebsite(startUrl: string): Promise<ScrapedPaylo
   let bestTitle = "";
   const ogTitles: string[] = [];
   const ogSiteNames: string[] = [];
+  let renderedPages = 0;
+  const renderContext = await newRenderContext(USER_AGENT);
 
-  while (queue.length && raw_pages.length < MAX_PAGES) {
-    queue.sort((a, b) => b.score - a.score);
-    const next = queue.shift();
-    if (!next) break;
-    const { url, depth, score } = next;
-    if (visited.has(url)) continue;
-    if (!isUrlAllowedByRobots(robotsRules, url)) continue;
-    visited.add(url);
+  try {
+    while (queue.length && raw_pages.length < MAX_PAGES) {
+      queue.sort((a, b) => b.score - a.score);
+      const next = queue.shift();
+      if (!next) break;
+      const { url, depth, score } = next;
+      if (visited.has(url)) continue;
+      if (!isUrlAllowedByRobots(robotsRules, url)) continue;
+      visited.add(url);
 
-    const got = await fetchHtml(url);
-    if (!got) continue;
-    if (got.title.length > bestTitle.length) bestTitle = got.title;
+      const staticGot = await fetchHtml(url);
+      const renderedGot =
+        renderedPages < MAX_RENDERED_PAGES && shouldRenderPage(url, score, staticGot)
+          ? await fetchRenderedHtml(renderContext, url)
+          : null;
+      if (renderedGot) renderedPages += 1;
+      const got = betterHtml(staticGot, renderedGot);
+      if (!got) continue;
+      if (got.title.length > bestTitle.length) bestTitle = got.title;
 
-    const og = collectOpenGraph(got.html);
-    if (og.ogTitle) ogTitles.push(og.ogTitle);
-    if (og.ogSiteName) ogSiteNames.push(og.ogSiteName);
+      const og = collectOpenGraph(got.html);
+      if (og.ogTitle) ogTitles.push(og.ogTitle);
+      if (og.ogSiteName) ogSiteNames.push(og.ogSiteName);
 
-    const text = visibleTextFromHtml(got.html);
-    raw_pages.push({ url, text });
-    htmlByUrl.push({ url, html: got.html });
+      const text = visibleTextFromHtml(got.html);
+      raw_pages.push({ url, text });
+      htmlByUrl.push({ url, html: got.html });
 
-    if (depth < MAX_DEPTH && raw_pages.length < MAX_PAGES) {
-      const links = collectLinks(got.html, url);
-      const seenHref = new Set<string>();
-      for (const L of links) {
-        if (seenHref.has(L.href)) continue;
-        seenHref.add(L.href);
-        if (visited.has(L.href)) continue;
-        if (!isUrlAllowedByRobots(robotsRules, L.href)) continue;
-        queue.push({ url: L.href, depth: depth + 1, score: L.score + score * 0.01 });
+      if (depth < MAX_DEPTH && raw_pages.length < MAX_PAGES) {
+        const links = collectLinks(got.html, url);
+        const seenHref = new Set<string>();
+        for (const L of links) {
+          if (seenHref.has(L.href)) continue;
+          seenHref.add(L.href);
+          if (visited.has(L.href)) continue;
+          if (!isUrlAllowedByRobots(robotsRules, L.href)) continue;
+          queue.push({ url: L.href, depth: depth + 1, score: L.score + score * 0.01 });
+        }
       }
     }
+  } finally {
+    await renderContext?.close().catch(() => undefined);
+    await closeRenderedBrowser();
   }
 
   if (!raw_pages.length) {

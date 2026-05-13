@@ -4,6 +4,7 @@ export const imageDetailSchema = z.object({
   url: z.string(),
   alt: z.string(),
   caption: z.string(),
+  category: z.string().optional().default("General"),
 });
 
 export const imageProbeEntrySchema = z.object({

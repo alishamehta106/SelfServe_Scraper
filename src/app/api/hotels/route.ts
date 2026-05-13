@@ -5,8 +5,16 @@ import { prisma } from "@/lib/db";
 import { buildDemoScrapedPayload } from "@/lib/demo-hotel";
 import { detectGaps } from "@/lib/gap-detection";
 import { scrapeHotelWebsite } from "@/lib/scraper/crawl";
+import { verifyHotelWebsite } from "@/lib/scraper/verifyHotelWebsite";
 
 export const maxDuration = 120;
+
+function publicScrapeError(message: string): string {
+  if (/No crawlable HTML pages were retrieved/i.test(message)) {
+    return "The site looks like a hotel website, but its public pages could not be opened by the scraper. The site may block automated access, disallow crawling in robots.txt, require browser verification, or serve the content in a way the crawler cannot read.";
+  }
+  return message;
+}
 
 export async function POST(req: Request) {
   let body: unknown;
@@ -29,12 +37,24 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing url" }, { status: 400 });
   }
 
+  let verifiedUrl = url;
+  if (!useDemo) {
+    const verification = await verifyHotelWebsite(url);
+    if (!verification.ok) {
+      return NextResponse.json(
+        { error: verification.reason ?? "That link does not look like a hotel website." },
+        { status: 422 },
+      );
+    }
+    verifiedUrl = verification.normalizedUrl;
+  }
+
   let scraped;
   try {
-    scraped = useDemo ? buildDemoScrapedPayload() : await scrapeHotelWebsite(url);
+    scraped = useDemo ? buildDemoScrapedPayload() : await scrapeHotelWebsite(verifiedUrl);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Scrape failed";
-    return NextResponse.json({ error: msg }, { status: 422 });
+    return NextResponse.json({ error: publicScrapeError(msg) }, { status: 422 });
   }
 
   const { gapReport, missingFields } = detectGaps(
@@ -48,7 +68,7 @@ export async function POST(req: Request) {
 
   const hotel = await prisma.hotel.create({
     data: {
-      websiteUrl: scraped.structured.website || url,
+      websiteUrl: scraped.structured.website || verifiedUrl,
       reviewToken,
       operatorToken,
       scrapedData: scraped as object,

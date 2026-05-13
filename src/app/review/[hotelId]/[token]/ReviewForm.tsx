@@ -81,6 +81,41 @@ function parseContacts(text: string): Array<{ label: string; value: string; note
     });
 }
 
+function imageKey(value: string): string {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    url.search = "";
+    return url.href.toLowerCase();
+  } catch {
+    return value.toLowerCase();
+  }
+}
+
+function dedupeImageUrls(urls: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of urls) {
+    const url = raw.trim();
+    if (!url) continue;
+    const key = imageKey(url);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(url);
+  }
+  return out;
+}
+
+function groupedImages(structured: HotelStructured): Array<{ category: string; urls: string[] }> {
+  const groups = new Map<string, string[]>();
+  for (const url of dedupeImageUrls(structured.images)) {
+    const detail = structured.metadata.image_details?.find((entry) => entry.url === url);
+    const category = detail?.category || "General";
+    groups.set(category, [...(groups.get(category) ?? []), url]);
+  }
+  return [...groups.entries()].map(([category, urls]) => ({ category, urls }));
+}
+
 export default function ReviewForm({
   hotelId,
   token,
@@ -102,6 +137,7 @@ export default function ReviewForm({
 
   const locked = status === "completed";
   const fieldIssues = useMemo(() => validateStructuredFields(structured), [structured]);
+  const imageGroups = useMemo(() => groupedImages(structured), [structured]);
   const hasBlockingIssues = fieldIssues.some((issue) => issue.severity === "error");
 
   async function onUpload(file: File) {
@@ -116,7 +152,7 @@ export default function ReviewForm({
       return;
     }
     if (data.url) {
-      setStructured((s) => ({ ...s, images: [...s.images, data.url!] }));
+      setStructured((s) => ({ ...s, images: dedupeImageUrls([...s.images, data.url!]) }));
     }
   }
 
@@ -140,7 +176,7 @@ export default function ReviewForm({
       dining,
       services: structured.services.map((s) => s.trim()).filter(Boolean),
       room_types: structured.room_types.map((s) => s.trim()).filter(Boolean),
-      images: structured.images.map((s) => s.trim()).filter(Boolean),
+      images: dedupeImageUrls(structured.images),
     };
     const res = await fetch(`/api/hotels/${hotelId}/review`, {
       method: "POST",
@@ -371,8 +407,8 @@ export default function ReviewForm({
                   setStructured({ ...structured, dining });
                 }}
               />
-              <input
-                className="ss-field w-full rounded-xl px-3 py-2 text-sm"
+              <textarea
+                className="ss-field min-h-[72px] w-full rounded-xl px-3 py-2 text-sm"
                 placeholder="Hours"
                 disabled={locked}
                 value={row.hours}
@@ -384,7 +420,7 @@ export default function ReviewForm({
               />
               <textarea
                 className="ss-field min-h-[64px] w-full rounded-xl px-3 py-2 text-sm"
-                placeholder="Menu items (one per line)"
+                placeholder="Menu items and prices, one per line. Example: Avocado Toast - $16"
                 disabled={locked}
                 value={row.menu_items.join("\n")}
                 onChange={(e) => {
@@ -481,28 +517,35 @@ export default function ReviewForm({
             <p className="text-xs text-slate-500">
               Review image URLs or upload new property photos.
             </p>
-            <div className="flex flex-wrap gap-2">
-              {structured.images.slice(0, 16).map((src) => {
-                const det = structured.metadata.image_details?.find((d) => d.url === src);
-                return (
-                  <div
-                    key={src}
-                    className="w-36 overflow-hidden rounded-2xl border border-[var(--border)] bg-[#fffdf8] shadow-sm"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={src}
-                      alt={det?.alt ?? "Hotel image"}
-                      className="h-28 w-full object-cover"
-                      loading="lazy"
-                      referrerPolicy="no-referrer-when-downgrade"
-                    />
-                    {det?.caption ? (
-                      <p className="line-clamp-2 p-1 text-[10px] text-slate-600">{det.caption}</p>
-                    ) : null}
+            <div className="space-y-4">
+              {imageGroups.map((group) => (
+                <div key={group.category} className="space-y-2">
+                  <h3 className="text-sm font-semibold text-slate-700">{group.category}</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {group.urls.slice(0, 16).map((src) => {
+                      const det = structured.metadata.image_details?.find((d) => d.url === src);
+                      return (
+                        <div
+                          key={src}
+                          className="w-36 overflow-hidden rounded-2xl border border-[var(--border)] bg-[#fffdf8] shadow-sm"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={src}
+                            alt={det?.alt ?? "Hotel image"}
+                            className="h-28 w-full object-cover"
+                            loading="lazy"
+                            referrerPolicy="no-referrer-when-downgrade"
+                          />
+                          {det?.caption ? (
+                            <p className="line-clamp-2 p-1 text-[10px] text-slate-600">{det.caption}</p>
+                          ) : null}
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           </div>
         ) : null}
@@ -514,7 +557,7 @@ export default function ReviewForm({
           onChange={(e) =>
             setStructured({
               ...structured,
-              images: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean),
+              images: dedupeImageUrls(e.target.value.split("\n")),
             })
           }
         />

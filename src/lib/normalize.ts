@@ -18,8 +18,90 @@ function pickStr(scraped: string, staff: string): string {
   return staff.trim() !== "" ? staff.trim() : scraped.trim();
 }
 
-function dedupe(arr: string[]): string[] {
-  return [...new Set(arr.map((s) => s.trim()).filter(Boolean))];
+function normalizedKey(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function imageKey(value: string): string {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    url.search = "";
+    return url.href.toLowerCase();
+  } catch {
+    return normalizedKey(value);
+  }
+}
+
+function dedupe(arr: string[], keyFn: (value: string) => string = normalizedKey): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of arr) {
+    const value = raw.trim();
+    if (!value) continue;
+    const key = keyFn(value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
+}
+
+function removeLeadingQuestion(input: string): string {
+  return input
+    .split(/(?<=[?.!])\s+|\n+/)
+    .filter((part) => !/^\s*(?:are|do|does|what|when|where|which|who|how|can|is|in)\b[^.!?]{0,180}\?\s*$/i.test(part))
+    .join(" ")
+    .replace(/^\s*(?:pet policy|cancellation policy|smoking policy|check[-\s]?in|check[-\s]?out)\s*[:\-]\s*/i, "")
+    .replace(/\b(?:are pets allowed|do you allow pets|what is your pet policy|what is the pet policy|what is your cancellation policy|what is the cancellation policy|what is your smoking policy|what is the smoking policy|are there restrictions for weight, height or types)\?\s*/gi, "")
+    .trim();
+}
+
+function cleanPolicyAnswer(kind: "pet" | "cancellation" | "smoking", input: string): string {
+  const value = removeLeadingQuestion(input).replace(/\s+/g, " ").trim();
+  if (!value) return "";
+  const policySignals: Record<"pet" | "cancellation" | "smoking", RegExp> = {
+    pet: /\b(pet|dog|cat|animal|service animal|fee|deposit|allowed|not allowed|prohibited|weight|pounds?|lbs?)\b/i,
+    cancellation: /\b(cancel|refund|deposit|non-refundable|deadline|arrival|no-show|hours|days)\b/i,
+    smoking: /\b(smok|non-smoking|smoke-free|fee|prohibited|designated)\b/i,
+  };
+  return policySignals[kind].test(value) ? value : "";
+}
+
+const ROOM_NAME_PATTERN =
+  /\b(?:classic|premier|deluxe|standard|superior|executive|accessible|ada|beacon hill|city view|studio|suite|king|queen|double|twin)\b/i;
+const ROOM_NOISE =
+  /\b(link to larger image|image|photo|gallery|view all|book now|reserve|check availability|amenities|policy|dining|restaurant|parking|address|phone|email|calendar|journal|press|article|decor|décor|fitness|telephone|workspace|pet|feeder|coffee|bottled water|bicycles?|hydrow|tonal|market street|complimentary|on-site|in-room|audible|messages|located|larger|guest room)\b/i;
+
+function cleanRoomType(value: string): string {
+  return value
+    .replace(/\bItem\s*\d+\b/gi, " ")
+    .replace(/\bLink to Larger Image\b/gi, " ")
+    .replace(/^\s*Rooms?\s*&\s*Suites?\s*/i, "")
+    .replace(/^\s*(?:Rooms?|Suites?|Accommodations?)\s*[:\-]\s*/i, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:])/g, "$1")
+    .trim();
+}
+
+function cleanRoomTypes(values: string[]): string[] {
+  return dedupe(
+    values
+      .map(cleanRoomType)
+      .filter((value) => {
+        const words = value.split(/\s+/);
+        return (
+          ROOM_NAME_PATTERN.test(value) &&
+          !ROOM_NOISE.test(value) &&
+          !/\||\d{3,}|[.!?]/.test(value) &&
+          !/^\s*[•*-]/.test(value) &&
+          value.length >= 4 &&
+          value.length <= 70 &&
+          words.length <= 7 &&
+          !/\b(with|including|includes?|located|larger|use of)\b/i.test(value)
+        );
+      }),
+  );
 }
 
 function mergeLabeledContacts(
@@ -66,6 +148,20 @@ function mergeLabeledAddresses(
   return out;
 }
 
+function dedupeImageDetails(
+  rows: HotelStructured["metadata"]["image_details"],
+): HotelStructured["metadata"]["image_details"] {
+  const seen = new Set<string>();
+  const out: HotelStructured["metadata"]["image_details"] = [];
+  for (const row of rows ?? []) {
+    const key = imageKey(row.url);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
 /** Staff non-empty strings override scraped; arrays come from the form; images merge unique. */
 export function mergeStaffOverrides(
   scraped: HotelStructured,
@@ -89,22 +185,23 @@ export function mergeStaffOverrides(
     policies: {
       check_in: normTime(pickStr(scraped.policies.check_in, staff.policies.check_in)),
       check_out: normTime(pickStr(scraped.policies.check_out, staff.policies.check_out)),
-      pet_policy: pickStr(scraped.policies.pet_policy, staff.policies.pet_policy),
-      cancellation_policy: pickStr(
+      pet_policy: cleanPolicyAnswer("pet", pickStr(scraped.policies.pet_policy, staff.policies.pet_policy)),
+      cancellation_policy: cleanPolicyAnswer("cancellation", pickStr(
         scraped.policies.cancellation_policy,
         staff.policies.cancellation_policy,
-      ),
-      smoking_policy: pickStr(scraped.policies.smoking_policy, staff.policies.smoking_policy),
+      )),
+      smoking_policy: cleanPolicyAnswer("smoking", pickStr(scraped.policies.smoking_policy, staff.policies.smoking_policy)),
     },
-    room_types: staff.room_types.map((s) => s.trim()).filter(Boolean),
-    images: dedupe([...staff.images, ...scraped.images]),
+    room_types: cleanRoomTypes(staff.room_types),
+    images: dedupe([...staff.images, ...scraped.images], imageKey),
   metadata: {
     scrape_timestamp: scraped.metadata.scrape_timestamp,
     source_pages: scraped.metadata.source_pages,
-    image_details:
+    image_details: dedupeImageDetails(
       staff.metadata.image_details?.length > 0
         ? staff.metadata.image_details
         : (scraped.metadata.image_details ?? []),
+    ),
     image_probe: staff.metadata.image_probe ?? scraped.metadata.image_probe,
   },
   };

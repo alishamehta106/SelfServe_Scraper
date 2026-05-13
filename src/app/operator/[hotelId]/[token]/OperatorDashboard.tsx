@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { GapReport, HotelStructured } from "@/lib/schema/hotel";
 
@@ -53,6 +53,35 @@ const amenityLabels: Record<string, string> = {
   meeting_space: "Meeting / event space",
 };
 
+function imageKey(value: string): string {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    url.search = "";
+    return url.href.toLowerCase();
+  } catch {
+    return value.toLowerCase();
+  }
+}
+
+function groupedImages(structured: HotelStructured): Array<{ category: string; urls: string[] }> {
+  const groups = new Map<string, string[]>();
+  const seen = new Set<string>();
+  for (const url of structured.images) {
+    const key = imageKey(url);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const detail = structured.metadata.image_details?.find((entry) => entry.url === url);
+    const category = detail?.category || "General";
+    groups.set(category, [...(groups.get(category) ?? []), url]);
+  }
+  return [...groups.entries()].map(([category, urls]) => ({ category, urls }));
+}
+
+function TextBlock({ value }: { value: string }) {
+  return <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{value || "Blank"}</p>;
+}
+
 export default function OperatorDashboard({
   hotelId,
   operatorToken,
@@ -63,13 +92,44 @@ export default function OperatorDashboard({
   reviewToken,
 }: Props) {
   const [origin, setOrigin] = useState("");
+  const [liveStatus, setLiveStatus] = useState(status);
+  const [liveStructured, setLiveStructured] = useState(structured);
+  const [liveGapReport, setLiveGapReport] = useState(gapReport);
+
   useEffect(() => {
     setOrigin(window.location.origin);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function refreshOperatorData() {
+      const res = await fetch(`/api/hotels/${hotelId}/operator?token=${encodeURIComponent(operatorToken)}`);
+      if (!res.ok || cancelled) return;
+      const data = (await res.json()) as {
+        status?: string;
+        structured?: HotelStructured;
+        gapReport?: GapReport;
+      };
+      if (data.status) setLiveStatus(data.status);
+      if (data.structured) setLiveStructured(data.structured);
+      if (data.gapReport) setLiveGapReport(data.gapReport);
+    }
+
+    const interval = window.setInterval(() => {
+      void refreshOperatorData();
+    }, 4000);
+    void refreshOperatorData();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [hotelId, operatorToken]);
+
   const reviewUrl = `${origin}/review/${hotelId}/${reviewToken}`;
-  const operatorUrl = `${origin}/operator/${hotelId}/${operatorToken}`;
-  const reviewCompleted = status === "completed";
+  const reviewCompleted = liveStatus === "completed";
+  const imageGroups = useMemo(() => groupedImages(liveStructured), [liveStructured]);
 
   return (
     <main className="ss-shell max-w-5xl space-y-6 py-10">
@@ -96,141 +156,168 @@ export default function OperatorDashboard({
       </header>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-[var(--foreground)]">Links</h2>
+        <h2 className="text-lg font-semibold text-[var(--foreground)]">Hotel review link</h2>
         <CopyLine label="Send to hotel (review & edit)" fullUrl={reviewUrl} />
-        <CopyLine label="Operator dashboard (this page)" fullUrl={operatorUrl} />
       </section>
 
       <section className="ss-card space-y-3 rounded-[24px] p-5">
-        <h2 className="text-lg font-semibold text-[var(--foreground)]">At a glance</h2>
-        <dl className="grid gap-2 text-sm sm:grid-cols-2">
+        <h2 className="text-lg font-semibold text-[var(--foreground)]">General info</h2>
+        <TextBlock value={liveStructured.hotel_name} />
+        {gapBadge("hotel_name", liveGapReport) ? (
+          <p className="text-xs text-slate-500">Scrape: {gapBadge("hotel_name", liveGapReport)}</p>
+        ) : null}
+      </section>
+
+      <section className="ss-card space-y-4 rounded-[24px] p-5">
+        <h2 className="text-lg font-semibold text-[var(--foreground)]">Contact</h2>
+        <div>
+          <h3 className="text-sm font-medium text-slate-800">Phone</h3>
+          <TextBlock value={liveStructured.contact.phone} />
+        </div>
+        {(liveStructured.contact.phones?.length ?? 0) > 0 ? (
           <div>
-            <dt className="text-slate-500">Hotel name</dt>
-            <dd className="font-medium text-slate-900">{structured.hotel_name || "—"}</dd>
-            {gapBadge("hotel_name", gapReport) ? (
-              <dd className="text-xs text-slate-500">Scrape: {gapBadge("hotel_name", gapReport)}</dd>
-            ) : null}
-          </div>
-          <div>
-            <dt className="text-slate-500">Phone</dt>
-            <dd className="font-medium text-slate-900">{structured.contact.phone || "—"}</dd>
-          </div>
-          <div>
-            <dt className="text-slate-500">Email</dt>
-            <dd className="font-medium text-slate-900">{structured.contact.email || "—"}</dd>
-          </div>
-          <div className="sm:col-span-2">
-            <dt className="text-slate-500">Address</dt>
-            <dd className="font-medium text-slate-900">{structured.contact.address || "—"}</dd>
-          </div>
-          {(structured.contact.phones?.length ?? 0) > 0 ? (
-            <div className="sm:col-span-2">
-              <dt className="text-slate-500">Phone numbers</dt>
-              <dd className="space-y-1">
-                {structured.contact.phones.map((entry, index) => (
-                  <p key={`${entry.value}-${index}`} className="text-slate-900">
-                    <span className="font-medium">{entry.label}:</span> {entry.value}
-                    {entry.note ? <span className="text-slate-500"> · {entry.note}</span> : null}
-                  </p>
-                ))}
-              </dd>
+            <h3 className="text-sm font-medium text-slate-800">Additional phone numbers</h3>
+            <div className="mt-1 space-y-1 text-sm text-slate-700">
+              {liveStructured.contact.phones.map((entry, index) => (
+                <p key={`${entry.value}-${index}`}>
+                  <span className="font-medium">{entry.label}:</span> {entry.value}
+                  {entry.note ? <span className="text-slate-500"> · {entry.note}</span> : null}
+                </p>
+              ))}
             </div>
-          ) : null}
-          {(structured.contact.addresses?.length ?? 0) > 0 ? (
-            <div className="sm:col-span-2">
-              <dt className="text-slate-500">Addresses</dt>
-              <dd className="space-y-1">
-                {structured.contact.addresses.map((entry, index) => (
-                  <p key={`${entry.value}-${index}`} className="text-slate-900">
-                    <span className="font-medium">{entry.label}:</span> {entry.value}
-                    {entry.note ? <span className="text-slate-500"> · {entry.note}</span> : null}
-                  </p>
-                ))}
-              </dd>
+          </div>
+        ) : null}
+        <div>
+          <h3 className="text-sm font-medium text-slate-800">Email</h3>
+          <TextBlock value={liveStructured.contact.email} />
+        </div>
+        <div>
+          <h3 className="text-sm font-medium text-slate-800">Address</h3>
+          <TextBlock value={liveStructured.contact.address} />
+        </div>
+        {(liveStructured.contact.addresses?.length ?? 0) > 0 ? (
+          <div>
+            <h3 className="text-sm font-medium text-slate-800">Additional addresses</h3>
+            <div className="mt-1 space-y-1 text-sm text-slate-700">
+              {liveStructured.contact.addresses.map((entry, index) => (
+                <p key={`${entry.value}-${index}`}>
+                  <span className="font-medium">{entry.label}:</span> {entry.value}
+                  {entry.note ? <span className="text-slate-500"> · {entry.note}</span> : null}
+                </p>
+              ))}
             </div>
-          ) : null}
-        </dl>
+          </div>
+        ) : null}
       </section>
 
       <section className="ss-card space-y-3 rounded-[24px] p-5">
-        <h2 className="text-lg font-semibold text-[var(--foreground)]">Current details</h2>
-        <div className="grid gap-4 text-sm sm:grid-cols-2">
-          <div>
-            <h3 className="font-medium text-slate-800">Amenities</h3>
-            <p className="mt-1 text-slate-600">
-              {Object.entries(structured.amenities)
-                .filter(([, enabled]) => enabled)
-                .map(([name]) => amenityLabels[name] ?? name)
-                .join(", ") || "None marked available"}
+        <h2 className="text-lg font-semibold text-[var(--foreground)]">Amenities</h2>
+        <div className="grid gap-2 text-sm sm:grid-cols-2">
+          {Object.entries(amenityLabels).map(([key, label]) => (
+            <p key={key} className={liveStructured.amenities[key as keyof HotelStructured["amenities"]] ? "text-slate-900" : "text-slate-400"}>
+              {label}:{" "}
+              {liveStructured.amenities[key as keyof HotelStructured["amenities"]]
+                ? "Present"
+                : reviewCompleted
+                  ? "Not present"
+                  : "Not found"}
             </p>
-          </div>
-          <div>
-            <h3 className="font-medium text-slate-800">Services</h3>
-            <p className="mt-1 text-slate-600">{structured.services.join(", ") || "None listed"}</p>
-          </div>
-          <div>
-            <h3 className="font-medium text-slate-800">Room types</h3>
-            <p className="mt-1 text-slate-600">{structured.room_types.join(", ") || "None listed"}</p>
-          </div>
-          <div>
-            <h3 className="font-medium text-slate-800">Policies</h3>
-            <dl className="mt-1 space-y-1 text-slate-600">
-              <div>
-                <dt className="inline font-medium">Check-in:</dt>{" "}
-                <dd className="inline">{structured.policies.check_in || "Blank"}</dd>
-              </div>
-              <div>
-                <dt className="inline font-medium">Check-out:</dt>{" "}
-                <dd className="inline">{structured.policies.check_out || "Blank"}</dd>
-              </div>
-              <div>
-                <dt className="inline font-medium">Pets:</dt>{" "}
-                <dd className="inline">{structured.policies.pet_policy || "Blank"}</dd>
-              </div>
-            </dl>
-          </div>
+          ))}
         </div>
       </section>
 
       <section className="space-y-2">
         <h2 className="text-lg font-semibold text-[var(--foreground)]">Dining</h2>
-        {structured.dining.length === 0 ? (
+        {liveStructured.dining.length === 0 ? (
           <p className="text-sm text-slate-500">None detected yet.</p>
         ) : (
-          <ul className="list-inside list-disc space-y-1 text-sm text-slate-700">
-            {structured.dining.map((d, i) => (
-              <li key={i}>
-                <span className="font-medium">{d.restaurant_name || "(unnamed venue)"}</span>
-                {d.hours ? ` · ${d.hours}` : ""}
-              </li>
+          <div className="grid gap-3">
+            {liveStructured.dining.map((d, i) => (
+              <div key={i} className="ss-card rounded-[20px] p-4 text-sm">
+                <div className="space-y-2">
+                  <h3 className="font-semibold text-[var(--foreground)]">
+                    {d.restaurant_name || `Restaurant ${i + 1}`}
+                  </h3>
+                  {d.hours ? <p className="ss-muted whitespace-pre-wrap">{d.hours}</p> : null}
+                </div>
+                {d.menu_items.length ? (
+                  <div className="mt-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Menu items and prices
+                    </p>
+                    <ul className="mt-2 grid gap-1 text-slate-700 sm:grid-cols-2">
+                      {d.menu_items.map((item) => (
+                        <li key={item} className="rounded-xl bg-white/70 px-3 py-2">
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
             ))}
-          </ul>
+          </div>
         )}
-        {gapBadge("dining", gapReport) ? (
-          <p className="text-xs text-slate-500">Scrape: {gapBadge("dining", gapReport)}</p>
+        {gapBadge("dining", liveGapReport) ? (
+          <p className="text-xs text-slate-500">Scrape: {gapBadge("dining", liveGapReport)}</p>
         ) : null}
+      </section>
+
+      <section className="ss-card space-y-2 rounded-[24px] p-5">
+        <h2 className="text-lg font-semibold text-[var(--foreground)]">Services</h2>
+        <TextBlock value={liveStructured.services.join("\n")} />
+      </section>
+
+      <section className="ss-card space-y-4 rounded-[24px] p-5">
+        <h2 className="text-lg font-semibold text-[var(--foreground)]">Policies</h2>
+        {(
+          [
+            ["check_in", "Check-in"],
+            ["check_out", "Check-out"],
+            ["pet_policy", "Pet policy"],
+            ["cancellation_policy", "Cancellation"],
+            ["smoking_policy", "Smoking"],
+          ] as const
+        ).map(([key, label]) => (
+          <div key={key}>
+            <h3 className="text-sm font-medium text-slate-800">{label}</h3>
+            <TextBlock value={liveStructured.policies[key]} />
+          </div>
+        ))}
+      </section>
+
+      <section className="ss-card space-y-2 rounded-[24px] p-5">
+        <h2 className="text-lg font-semibold text-[var(--foreground)]">Room types</h2>
+        <TextBlock value={liveStructured.room_types.join("\n")} />
       </section>
 
       <section className="space-y-2">
         <h2 className="text-lg font-semibold text-[var(--foreground)]">Images</h2>
-        <div className="flex flex-wrap gap-2">
-          {structured.images.slice(0, 12).map((src) => (
-            <a
-              key={src}
-              href={src}
-              target="_blank"
-              rel="noreferrer"
-              className="block h-24 w-32 overflow-hidden rounded-2xl border border-[var(--border)] bg-[#fffdf8]"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={src}
-                alt=""
-                className="h-full w-full object-cover"
-                loading="lazy"
-                referrerPolicy="no-referrer-when-downgrade"
-              />
-            </a>
+        <div className="space-y-4">
+          {imageGroups.map((group) => (
+            <div key={group.category} className="space-y-2">
+              <h3 className="text-sm font-semibold text-slate-700">{group.category}</h3>
+              <div className="flex flex-wrap gap-2">
+                {group.urls.slice(0, 12).map((src) => (
+                  <a
+                    key={src}
+                    href={src}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block h-24 w-32 overflow-hidden rounded-2xl border border-[var(--border)] bg-[#fffdf8]"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={src}
+                      alt=""
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                      referrerPolicy="no-referrer-when-downgrade"
+                    />
+                  </a>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       </section>
