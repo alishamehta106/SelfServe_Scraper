@@ -68,45 +68,18 @@ function cleanPolicyAnswer(kind: "pet" | "cancellation" | "smoking", input: stri
   return policySignals[kind].test(value) ? value : "";
 }
 
-const ROOM_NAME_PATTERN =
-  /\b(?:classic|premier|deluxe|standard|superior|executive|accessible|ada|beacon hill|city view|studio|suite|king|queen|double|twin)\b/i;
-const ROOM_NOISE =
-  /\b(link to larger image|image|photo|gallery|view all|book now|reserve|check availability|amenities|policy|dining|restaurant|parking|address|phone|email|calendar|journal|press|article|decor|décor|fitness|telephone|workspace|pet|feeder|coffee|bottled water|bicycles?|hydrow|tonal|market street|complimentary|on-site|in-room|audible|messages|located|larger|guest room)\b/i;
-
-function cleanRoomType(value: string): string {
-  return value
-    .replace(/\bItem\s*\d+\b/gi, " ")
-    .replace(/\bLink to Larger Image\b/gi, " ")
-    .replace(/^\s*Rooms?\s*&\s*Suites?\s*/i, "")
-    .replace(/^\s*(?:Rooms?|Suites?|Accommodations?)\s*[:\-]\s*/i, "")
-    .replace(/\s+/g, " ")
-    .replace(/\s+([,.;:])/g, "$1")
-    .trim();
-}
-
-function cleanRoomTypes(values: string[]): string[] {
-  return dedupe(
-    values
-      .map(cleanRoomType)
-      .filter((value) => {
-        const words = value.split(/\s+/);
-        return (
-          ROOM_NAME_PATTERN.test(value) &&
-          !ROOM_NOISE.test(value) &&
-          !/\||\d{3,}|[.!?]/.test(value) &&
-          !/^\s*[•*-]/.test(value) &&
-          value.length >= 4 &&
-          value.length <= 70 &&
-          words.length <= 7 &&
-          !/\b(with|including|includes?|located|larger|use of)\b/i.test(value)
-        );
-      }),
-  );
+function mergePolicyAnswer(
+  kind: "pet" | "cancellation" | "smoking",
+  scrapedValue: string,
+  staffValue: string,
+): string {
+  const staffAnswer = staffValue.trim();
+  if (staffAnswer) return staffAnswer;
+  return cleanPolicyAnswer(kind, scrapedValue);
 }
 
 function mergeLabeledContacts(
   primary: string,
-  scraped: HotelStructured["contact"]["phones"],
   staff: HotelStructured["contact"]["phones"],
 ): HotelStructured["contact"]["phones"] {
   const seen = new Set<string>();
@@ -114,7 +87,6 @@ function mergeLabeledContacts(
   for (const entry of [
     { label: "Primary", value: primary, note: "" },
     ...(staff ?? []),
-    ...(scraped ?? []),
   ]) {
     const value = entry.value.trim();
     if (!value) continue;
@@ -128,7 +100,6 @@ function mergeLabeledContacts(
 
 function mergeLabeledAddresses(
   primary: string,
-  scraped: HotelStructured["contact"]["addresses"],
   staff: HotelStructured["contact"]["addresses"],
 ): HotelStructured["contact"]["addresses"] {
   const seen = new Set<string>();
@@ -136,7 +107,6 @@ function mergeLabeledAddresses(
   for (const entry of [
     { label: "Primary", value: primary, note: "" },
     ...(staff ?? []),
-    ...(scraped ?? []),
   ]) {
     const value = entry.value.trim();
     if (!value) continue;
@@ -162,7 +132,7 @@ function dedupeImageDetails(
   return out;
 }
 
-/** Staff non-empty strings override scraped; arrays come from the form; images merge unique. */
+/** Staff non-empty strings override scraped; submitted arrays are treated as final. */
 export function mergeStaffOverrides(
   scraped: HotelStructured,
   staff: HotelStructured,
@@ -176,24 +146,25 @@ export function mergeStaffOverrides(
       phone,
       email: pickStr(scraped.contact.email, staff.contact.email),
       address,
-      phones: mergeLabeledContacts(phone, scraped.contact.phones, staff.contact.phones),
-      addresses: mergeLabeledAddresses(address, scraped.contact.addresses, staff.contact.addresses),
+      phones: mergeLabeledContacts(phone, staff.contact.phones),
+      addresses: mergeLabeledAddresses(address, staff.contact.addresses),
     },
     amenities: { ...staff.amenities },
     dining: staff.dining,
     services: staff.services.map((s) => s.trim()).filter(Boolean),
     policies: {
-      check_in: normTime(pickStr(scraped.policies.check_in, staff.policies.check_in)),
-      check_out: normTime(pickStr(scraped.policies.check_out, staff.policies.check_out)),
-      pet_policy: cleanPolicyAnswer("pet", pickStr(scraped.policies.pet_policy, staff.policies.pet_policy)),
-      cancellation_policy: cleanPolicyAnswer("cancellation", pickStr(
+      check_in: staff.policies.check_in.trim() || normTime(scraped.policies.check_in),
+      check_out: staff.policies.check_out.trim() || normTime(scraped.policies.check_out),
+      pet_policy: mergePolicyAnswer("pet", scraped.policies.pet_policy, staff.policies.pet_policy),
+      cancellation_policy: mergePolicyAnswer(
+        "cancellation",
         scraped.policies.cancellation_policy,
         staff.policies.cancellation_policy,
-      )),
-      smoking_policy: cleanPolicyAnswer("smoking", pickStr(scraped.policies.smoking_policy, staff.policies.smoking_policy)),
+      ),
+      smoking_policy: mergePolicyAnswer("smoking", scraped.policies.smoking_policy, staff.policies.smoking_policy),
     },
-    room_types: cleanRoomTypes(staff.room_types),
-    images: dedupe([...staff.images, ...scraped.images], imageKey),
+    room_types: staff.room_types.map((s) => s.trim()).filter(Boolean),
+    images: dedupe(staff.images, imageKey),
   metadata: {
     scrape_timestamp: scraped.metadata.scrape_timestamp,
     source_pages: scraped.metadata.source_pages,

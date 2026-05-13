@@ -156,7 +156,7 @@ The extractor combines visible text, HTML, Open Graph data, and JSON-LD hints in
 - Addresses must look like real street addresses with ZIP/postal structure.
 - Emails filter out placeholders and image filenames.
 - Pet, cancellation, and smoking policies must match the correct policy type.
-- Policy question text is stripped so the saved value is the answer only.
+- Scraped policy question text is stripped before the hotel sees the draft.
 - Pet policy does not accept generic marketing copy such as “pet-friendly rooms” unless policy details are present.
 - Dining extraction uses bounded dining blocks so parking, pet policy, and other unrelated priced sentences are not treated as menu items.
 - Dining hours are normalized into readable multi-line text when structured hours contain day ranges.
@@ -237,12 +237,12 @@ File: `src/lib/normalize.ts`
 
 When staff submits, the app merges scraped data and staff edits:
 
-- Staff non-empty strings override scraper values.
-- Contact arrays merge and dedupe phone/address entries.
-- Policy answers are cleaned and checked against their policy type.
-- Policy questions/prompts are removed from normalized answers.
-- Room types are trimmed, filtered for room-name-like values, and deduped.
-- Images are merged and deduped.
+- Staff non-empty strings override scraper values and are treated as the final operator/export values.
+- Contact arrays from the hotel form are deduped with the primary phone/address.
+- Scraped policy answers are cleaned and checked against their policy type.
+- Hotel-submitted policy answers are preserved as submitted.
+- Room types submitted by the hotel are preserved after basic line trimming.
+- Images submitted by the hotel are treated as the final image list.
 - Provenance is recorded so exports can identify whether data came from scraper or hotel staff.
 
 ### 9. Operator Dashboard
