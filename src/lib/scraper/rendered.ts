@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import type { Browser, BrowserContext } from "playwright";
+import type { Browser, BrowserContext } from "patchright";
 
 const RENDER_TIMEOUT_MS = 15000;
 
@@ -7,7 +7,7 @@ let browserPromise: Promise<Browser> | null = null;
 
 async function getBrowser(): Promise<Browser> {
   if (!browserPromise) {
-    browserPromise = import("playwright").then(({ chromium }) =>
+    browserPromise = import("patchright").then(({ chromium }) =>
       chromium.launch({
         headless: true,
       }),
